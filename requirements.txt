@@ -1,0 +1,14 @@
+tweepy
+openai
+python-dotenv 
+requests 
+sqlalchemy 
+transformers
+pandas
+numpy
+seaborn
+matplotlib
+scikit-learn
+scipy
+nltk
+groq
