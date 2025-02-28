@@ -1,24 +1,14 @@
-import os
+import os, sys
 import json
 import requests
 import time
 from datetime import datetime, timedelta
 import pandas as pd
-from dotenv import load_dotenv
 import tweepy
 from newspaper import Article
-import logging
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("agent_data_collection.log"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+from utils.logger import logger
+from utils.exception import SocialMediaAgentException
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
@@ -28,6 +18,7 @@ class CompanyDataCollector:
     Module to collect company information from various sources
     """
     def __init__(self, company_name, company_description):
+        logger.info(f"{'='*20} Company Data Collector started {'='*20}")
         self.company_name = company_name
         self.company_description = company_description
         self.google_api_key = os.getenv("GOOGLE_API_KEY")
@@ -47,6 +38,7 @@ class CompanyDataCollector:
     
     def fetch_google_search_results(self, num_results=10):
         """Get company information from Google Custom Search API"""
+        logger.info(f"{'='*20} Fetching Google search results started {'='*20}")
         try:
             url = "https://www.googleapis.com/customsearch/v1"
             params = {
@@ -57,10 +49,12 @@ class CompanyDataCollector:
             }
             
             response = requests.get(url, params=params)
+            logger.info(f"{'='*20} Google search results fetched successfully  {'='*20}")
             if response.status_code == 200:
                 search_results = response.json()
                 
                 # Extract information from search results
+                logger.info(f"{'='*20} Extracting information from search results {'='*20}")
                 if 'items' in search_results:
                     self.company_data["search_results"] = []
                     
@@ -79,14 +73,14 @@ class CompanyDataCollector:
                     logger.info(f"Fetched {len(self.company_data['search_results'])} Google search results")
                     return True
             
-            logger.warning(f"Failed to fetch Google search results: {response.status_code}")
+            logger.info(f"Failed to fetch Google search results: {response.status_code}")
             return False
         except Exception as e:
-            logger.error(f"Error in fetch_google_search_results: {str(e)}")
-            return False
+            raise SocialMediaAgentException(e, sys) from e
     
     def fetch_news_articles(self, days_back=30):
         """Fetch recent news articles about the company"""
+        logger.info(f"{'='*20} Fetching news articles started {'='*20}")
         try:
             today = datetime.now()
             from_date = (today - timedelta(days=days_back)).strftime('%Y-%m-%d')
@@ -99,7 +93,7 @@ class CompanyDataCollector:
                 'sortBy': 'relevancy',
                 'language': 'en'
             }
-            
+            logger.info(f"{'='*20} Fetching news articles from News API {'='*20}")
             response = requests.get(url, params=params)
             if response.status_code == 200:
                 data = response.json()
@@ -118,17 +112,17 @@ class CompanyDataCollector:
                     logger.info(f"Fetched {len(self.company_data['news'])} news articles")
                     return True
             
-            logger.warning(f"Failed to fetch news articles: {response.status_code}")
+            logger.info(f"Failed to fetch news articles: {response.status_code}")
             return False
         except Exception as e:
-            logger.error(f"Error in fetch_news_articles: {str(e)}")
-            return False
+            raise SocialMediaAgentException(e, sys) from e
     
     def scrape_company_website(self):
         """Scrape content from the company's official website"""
+        logger.info(f"{'='*20} Scraping company website started {'='*20}")
         try:
             if not self.company_data["basic_info"].get("official_website"):
-                logger.warning("No official website URL found")
+                logger.info("No official website URL found")
                 return False
                 
             website_url = self.company_data["basic_info"]["official_website"]
@@ -151,13 +145,13 @@ class CompanyDataCollector:
                 f"{website_url.rstrip('/')}/company",
                 f"{website_url.rstrip('/')}/our-company"
             ]
-            
+            logger.info(f"{'='*20} Fetching about page started {'='*20}")
             for about_url in about_urls:
                 try:
                     about_article = Article(about_url)
                     about_article.download()
                     about_article.parse()
-                    
+                    logger.info(f"{'='*20} About page fetched successfully {'='*20}")
                     if len(about_article.text) > 100:  # Ensure we got meaningful content
                         self.company_data["website_content"]["about"] = {
                             "title": about_article.title,
@@ -168,12 +162,13 @@ class CompanyDataCollector:
                     continue
             
             # Try to scrape products/services page
+            logger.info(f"{'='*20} Fetching products/services page started {'='*20}")
             product_urls = [
                 f"{website_url.rstrip('/')}/products",
                 f"{website_url.rstrip('/')}/services",
                 f"{website_url.rstrip('/')}/brands"
             ]
-            
+            logger.info(f"{'='*20} Fetching products/services page started {'='*20}")
             for product_url in product_urls:
                 try:
                     product_article = Article(product_url)
@@ -192,15 +187,12 @@ class CompanyDataCollector:
             logger.info(f"Scraped company website with {len(self.company_data['website_content'])} sections")
             return True
         except Exception as e:
-            logger.error(f"Error in scrape_company_website: {str(e)}")
-            return False
+            raise SocialMediaAgentException(e, sys) from e
     
     def extract_industry_keywords(self):
         """Extract industry-related keywords from collected data"""
         try:
-            # This is a simplified implementation
-            # In a real system, you might use NLP libraries like spaCy for entity extraction
-            
+            logger.info(f"{'='*20} Extracting industry-related keywords started {'='*20}")
             all_text = []
             
             # Add website content
@@ -208,14 +200,20 @@ class CompanyDataCollector:
                 if isinstance(section, dict) and "text" in section:
                     all_text.append(section["text"])
             
-            # Add news content
+            # Add news content - Filter out None values
             for article in self.company_data["news"]:
-                all_text.append(article.get("content", ""))
-                all_text.append(article.get("description", ""))
+                content = article.get("content", "")
+                description = article.get("description", "")
+                if content:  # Only add non-None content
+                    all_text.append(content)
+                if description:  # Only add non-None description
+                    all_text.append(description)
             
             # Simple keyword extraction based on frequency
-            # In a real implementation, you would use more sophisticated NLP techniques
+            # Filter out None values and convert to string
+            all_text = [str(text) for text in all_text if text is not None]
             combined_text = " ".join(all_text).lower()
+            
             words = combined_text.split()
             word_freq = {}
             
@@ -231,8 +229,7 @@ class CompanyDataCollector:
             logger.info(f"Extracted {len(self.company_data['industry_keywords'])} industry keywords")
             return True
         except Exception as e:
-            logger.error(f"Error in extract_industry_keywords: {str(e)}")
-            return False
+            raise SocialMediaAgentException(e, sys) from e
     
     def find_competitors(self):
         """Find potential competitors based on collected data"""
@@ -241,6 +238,7 @@ class CompanyDataCollector:
             # This is a simplified approach
             
             # Search for competitors
+            logger.info(f"{'='*20} Finding competitors started {'='*20}")
             url = "https://www.googleapis.com/customsearch/v1"
             params = {
                 'key': self.google_api_key,
@@ -248,7 +246,7 @@ class CompanyDataCollector:
                 'q': f"{self.company_name} competitors in {self.company_data['industry_keywords'][:3]}",
                 'num': 10
             }
-            
+            logger.info(f"{'='*20} Finding competitors started {'='*20}")
             response = requests.get(url, params=params)
             competitors = []
             
@@ -269,16 +267,16 @@ class CompanyDataCollector:
                                 "title": title,
                                 "snippet": snippet
                             })
-            
+            logger.info(f"{'='*20} Finding competitors started {'='*20}")
             self.company_data["competitors"] = competitors
             logger.info(f"Found {len(competitors)} competitor references")
             return True
         except Exception as e:
-            logger.error(f"Error in find_competitors: {str(e)}")
-            return False
+            raise SocialMediaAgentException(e, sys) from e
     
     def collect_all_company_data(self):
         """Collect all company data from various sources"""
+        logger.info(f"{'='*20} Collecting all company data started {'='*20}")
         results = {
             "google_search": self.fetch_google_search_results(),
             "news": self.fetch_news_articles(),
@@ -286,11 +284,11 @@ class CompanyDataCollector:
             "keywords": self.extract_industry_keywords(),
             "competitors": self.find_competitors()
         }
-        
+        logger.info(f"{'='*20} Collecting all company data started {'='*20}")
         # Save data to file
         output_dir = "data/companies"
         os.makedirs(output_dir, exist_ok=True)
-        
+        logger.info(f"{'='*20} Collecting all company data started {'='*20}")  
         filename = f"{output_dir}/{self.company_name.replace(' ', '_').lower()}_data.json"
         with open(filename, 'w') as f:
             json.dump(self.company_data, f, indent=2)
@@ -393,7 +391,7 @@ class SocialMediaExtractor:
                     
                     tweet_data["replies"] = tweet_replies
                 except Exception as e:
-                    logger.warning(f"Error fetching replies: {str(e)}")
+                    logger.info(f"Error fetching replies: {str(e)}")
                     tweet_data["replies"] = []
                 
                 self.social_data["twitter"].append(tweet_data)
@@ -401,7 +399,7 @@ class SocialMediaExtractor:
             logger.info(f"Extracted {len(self.social_data['twitter'])} tweets from Twitter for {username}")
             return True
         except Exception as e:
-            logger.error(f"Error extracting Twitter data: {str(e)}")
+            logger.info.error(f"Error extracting Twitter data: {str(e)}")
             return False
     
     def extract_bluesky_data(self, handle):
@@ -425,7 +423,7 @@ class SocialMediaExtractor:
             
             return True
         except Exception as e:
-            logger.error(f"Error extracting Bluesky data: {str(e)}")
+            logger.info.error(f"Error extracting Bluesky data: {str(e)}")
             return False
     
     def extract_mastodon_data(self, handle, instance="mastodon.social"):
@@ -449,7 +447,7 @@ class SocialMediaExtractor:
             
             return True
         except Exception as e:
-            logger.error(f"Error extracting Mastodon data: {str(e)}")
+            logger.info.error(f"Error extracting Mastodon data: {str(e)}")
             return False
     
     def extract_threads_data(self, username):
@@ -472,7 +470,7 @@ class SocialMediaExtractor:
             
             return True
         except Exception as e:
-            logger.error(f"Error extracting Threads data: {str(e)}")
+            logger.info.error(f"Error extracting Threads data: {str(e)}")
             return False
     
     def collect_all_social_data(self, twitter_handle=None, bluesky_handle=None, 
@@ -525,6 +523,7 @@ class DataCollectionOrchestrator:
     Orchestrates the entire data collection process
     """
     def __init__(self, company_name, company_description):
+        logger.info(f"{'='*20} Data Collection Orchestrator started {'='*20}")
         self.company_name = company_name
         self.company_description = company_description
         logger.info(f"Initializing data collection for {company_name}")
@@ -537,25 +536,26 @@ class DataCollectionOrchestrator:
             social_handles (dict): Dictionary with social media handles
                                  Format: {'twitter': 'handle', 'bluesky': 'handle', etc.}
         """
+        logger.info(f"{'='*20} Collecting all data started {'='*20}")
         start_time = time.time()
         
         # Step 1: Collect company information
         company_collector = CompanyDataCollector(self.company_name, self.company_description)
         company_result = company_collector.collect_all_company_data()
-        
+        logger.info(f"{'='*20} Collecting all data started {'='*20}")
         # Step 2: Collect social media data
-        social_collector = SocialMediaExtractor(self.company_name)
-        
+        # social_collector = SocialMediaExtractor(self.company_name)
+        logger.info(f"{'='*20} Collecting all data started {'='*20}")
         if not social_handles:
             social_handles = {}
             
-        social_result = social_collector.collect_all_social_data(
-            twitter_handle=social_handles.get('twitter'),
-            bluesky_handle=social_handles.get('bluesky'),
-            mastodon_handle=social_handles.get('mastodon'),
-            threads_handle=social_handles.get('threads')
-        )
-        
+        # social_result = social_collector.collect_all_social_data(
+        #     twitter_handle=social_handles.get('twitter'),
+        #     bluesky_handle=social_handles.get('bluesky'),
+        #     mastodon_handle=social_handles.get('mastodon'),
+        #     threads_handle=social_handles.get('threads')
+        # )
+        logger.info(f"{'='*20} Collecting all data started {'='*20}")
         end_time = time.time()
         duration = end_time - start_time
         
@@ -565,15 +565,16 @@ class DataCollectionOrchestrator:
             "collection_timestamp": datetime.now().isoformat(),
             "duration_seconds": duration,
             "company_data_status": company_result["status"],
-            "social_data_status": social_result["status"],
+            # "social_data_status": social_result["status"],
             "company_data_path": company_result["file_path"],
-            "social_data_path": social_result["file_path"]
+            # "social_data_path": social_result["file_path"]
         }
         
         # Save summary to file
+        logger.info(f"{'='*20} Collecting all data started {'='*20}")
         output_dir = "data/summaries"
         os.makedirs(output_dir, exist_ok=True)
-        
+        logger.info(f"{'='*20} Collecting all data started {'='*20}")
         filename = f"{output_dir}/{self.company_name.replace(' ', '_').lower()}_collection_summary.json"
         with open(filename, 'w') as f:
             json.dump(results, f, indent=2)
@@ -584,22 +585,4 @@ class DataCollectionOrchestrator:
         return results
 
 
-# Example usage
-if __name__ == "__main__":
-    # Example company
-    company_name = "Hindustan Unilever"
-    company_description = "Leading FMCG company in India"
-    
-    # Social media handles
-    social_handles = {
-        "twitter": "HUL_News",
-        "bluesky": "hindustanunilever.bsky.social",
-        "mastodon": "@hindustanunilever@mastodon.social",
-        "threads": "hindustanunilever"
-    }
-    
-    # Run data collection
-    orchestrator = DataCollectionOrchestrator(company_name, company_description)
-    results = orchestrator.collect_all_data(social_handles)
-    
-    print(json.dumps(results, indent=2))
+# E

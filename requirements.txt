@@ -13,3 +13,5 @@ scipy
 nltk
 groq
 newsapi-python
+newspaper3k
+lxml-html-clean
